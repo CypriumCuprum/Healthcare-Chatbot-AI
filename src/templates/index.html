@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HealthChatBot - Chatbot AI Hỏi Đáp Sức Khỏe</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>🤖 HealthChatBot - Chatbot AI Hỏi Đáp Sức Khỏe</h1>
+    
+    <div class="container">
+        <div class="chat-container">
+            <div class="chat-header">
+                <h2>Trò chuyện với HealthChatBot</h2>
+                <div class="tabs">
+                    <button class="tab active" onclick="showTab('symptom')">Chẩn đoán triệu chứng</button>
+                    <button class="tab" onclick="showTab('question')">Hỏi đáp sức khỏe</button>
+                </div>
+            </div>
+            
+            <div class="chat-messages" id="chat-messages">
+                <div class="message bot-message">
+                    Xin chào! Tôi là HealthChatBot. Tôi có thể giúp bạn chẩn đoán các triệu chứng hoặc trả lời các câu hỏi về sức khỏe. Vui lòng chọn một trong hai chế độ bên trên để bắt đầu.
+                </div>
+            </div>
+            
+            <div id="symptom-form">
+                <div class="checkbox-group">
+                    {% for field in symptom_fields %}
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="{{ field.name }}" name="{{ field.name }}" value="1">
+                        <label for="{{ field.name }}">{{ field.label }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="input-group">
+                    <button onclick="predictDisease()">Chẩn đoán</button>
+                </div>
+            </div>
+            
+            <div id="question-form" class="hidden">
+                <div class="input-group">
+                    <input type="text" id="question" placeholder="Nhập câu hỏi về sức khỏe...">
+                    <button onclick="askQuestion()">Gửi</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Function to show the selected tab
+        function showTab(tabName) {
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            const activeTab = document.querySelector(`.tab:nth-child(${tabName === 'symptom' ? '1' : '2'})`);
+            activeTab.classList.add('active');
+            
+            document.getElementById('symptom-form').classList.toggle('hidden', tabName !== 'symptom');
+            document.getElementById('question-form').classList.toggle('hidden', tabName !== 'question');
+        }
+        
+        // Function to add a message to the chat
+        function addMessage(message, isUser = false) {
+            const chatMessages = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            messageDiv.innerHTML = message;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Function to predict disease based on symptoms
+        function predictDisease() {
+            // Collect symptom data
+            const form = document.getElementById('symptom-form');
+            const checkboxes = form.querySelectorAll('input[type="checkbox"]');
+            
+            const formData = new FormData();
+            checkboxes.forEach(checkbox => {
+                formData.append(checkbox.name, checkbox.checked ? '1' : '0');
+            });
+            
+            // Get selected symptoms for display
+            const selectedSymptoms = Array.from(checkboxes)
+                .filter(cb => cb.checked)
+                .map(cb => cb.nextElementSibling.textContent);
+            
+            const symptomText = selectedSymptoms.length > 0 
+                ? `Các triệu chứng: ${selectedSymptoms.join(', ')}` 
+                : 'Không có triệu chứng được chọn';
+            
+            addMessage(symptomText, true);
+            
+            // Show loading message
+            addMessage('Đang chẩn đoán...');
+            
+            // Send request to server
+            fetch('/predict', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Format disease name for display
+                    const diseaseName = data.disease
+                        .replace('_', ' ')
+                        .split('_')
+                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                        .join(' ');
+                    
+                    let resultHTML = `<h3>Kết quả chẩn đoán: ${diseaseName}</h3>`;
+                    resultHTML += `<p>${data.description}</p>`;
+                    
+                    if (data.recommendations && data.recommendations.length > 0) {
+                        resultHTML += '<div class="recommendations"><h4>Khuyến nghị:</h4><ul>';
+                        data.recommendations.forEach(rec => {
+                            resultHTML += `<li>${rec}</li>`;
+                        });
+                        resultHTML += '</ul></div>';
+                    }
+                    
+                    // Add probability bars
+                    if (data.probabilities) {
+                        resultHTML += '<div class="probabilities"><h4>Tỷ lệ dự đoán:</h4>';
+                        for (const [disease, prob] of Object.entries(data.probabilities)) {
+                            const percentage = (prob * 100).toFixed(1);
+                            const formattedDisease = disease
+                                .replace('_', ' ')
+                                .split('_')
+                                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                                .join(' ');
+                            
+                            resultHTML += `<div>
+                                <span>${formattedDisease}: ${percentage}%</span>
+                                <div class="probability-bar">
+                                    <div class="probability-fill" style="width: ${percentage}%"></div>
+                                </div>
+                            </div>`;
+                        }
+                        resultHTML += '</div>';
+                    }
+                    
+                    // Display the result
+                    addMessage(resultHTML);
+                    
+                    // Reset checkboxes
+                    checkboxes.forEach(checkbox => checkbox.checked = false);
+                } else {
+                    addMessage(`<p>Lỗi: ${data.error}</p>`);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                addMessage('<p>Đã xảy ra lỗi khi xử lý yêu cầu.</p>');
+            });
+        }
+        
+        // Function to ask a health question
+        function askQuestion() {
+            const questionInput = document.getElementById('question');
+            const question = questionInput.value.trim();
+            
+            if (!question) return;
+            
+            // Add user question to chat
+            addMessage(question, true);
+            
+            // Show loading message
+            addMessage('Đang tìm câu trả lời...');
+            
+            // Prepare form data
+            const formData = new FormData();
+            formData.append('question', question);
+            
+            // Send request to server
+            fetch('/ask', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Remove loading message
+                const chatMessages = document.getElementById('chat-messages');
+                chatMessages.removeChild(chatMessages.lastChild);
+                
+                if (data.success) {
+                    // Format the answer with line breaks
+                    const formattedAnswer = data.answer.replace(/\n/g, '<br>');
+                    addMessage(formattedAnswer);
+                } else {
+                    addMessage(`<p>Lỗi: ${data.error}</p>`);
+                }
+                
+                // Clear input field
+                questionInput.value = '';
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                addMessage('<p>Đã xảy ra lỗi khi xử lý yêu cầu.</p>');
+            });
+        }
+        
+        // Event listener for Enter key in question input
+        document.getElementById('question').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                askQuestion();
+            }
+        });
+    </script>
+</body>
+</html>
